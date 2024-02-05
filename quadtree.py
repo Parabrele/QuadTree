@@ -14,61 +14,23 @@ import numpy as np
 
 QUADTREE_MAX_CAPACITY = 1
 
-def distance(p1, p2):
-    """
-    Return the distance between two points.
-    """
-    return np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
-
 def sqr_distance(p1, p2):
     """
     Return the distance between two points without taking the square root.
     """
     return (p1[0] - p2[0])**2 + (p1[1] - p2[1])**2
 
-""" Slower than distance_point_to_sqr """
 def dist_to_rect_squared(rect, point):
-    # contraint point.x à rester entre rect.x et rect.x + rect.w
     clamped_x = min(max(point[0], rect.top_left[0]), rect.top_left[0] + rect.width)
-    # contraint point.y à rester entre rect.y et rect.y + rect.h
     clamped_y = min(max(point[1], rect.top_left[1]), rect.top_left[1] + rect.height)
-    # clamped est la projection de point sur rect
     clamped = (clamped_x, clamped_y)
     return sqr_distance(point, clamped)
 
-def distance_point_to_sqr(sqr, point, distance_fn=distance):
-    """
-    Return the distance between a point and a square.
-    TODO : this function doesn't work.
-    """
-    x = sqr.top_left[0]
-    y = sqr.top_left[1]
-    px = point[0]
-    py = point[1]
-    if px < x:
-        if py < y:
-            return distance_fn((px, py), (x, y))
-        elif py > y + sqr.height:
-            return distance_fn((px, py), (x, y + sqr.height))
-        else:
-            return (x - px)**2 if distance_fn == sqr_distance else x - px
-    elif px > x + sqr.width:
-        if py < y:
-            return distance_fn((px, py), (x + sqr.width, y))
-        elif py > y + sqr.height:
-            return distance_fn((px, py), (x + sqr.width, y + sqr.height))
-        else:
-            return (px - x) ** 2 if distance_fn == sqr_distance else px - x
-    else:
-        if py < y:
-            return (y - py) ** 2 if distance_fn == sqr_distance else y - py
-        elif py > y + sqr.height:
-            return (py - y + sqr.height) ** 2 if distance_fn == sqr_distance else py - y + sqr.height
-        else:
-            return 0
-
 class QuadTree:
     def __init__(self, top_left, height, width, capacity=QUADTREE_MAX_CAPACITY):
+        """
+        Objects stored in a quadtree must have a vect attribute that is a tuple of two floats.
+        """
         self.top_left = top_left
         self.height = height
         self.width = width
@@ -120,8 +82,7 @@ class QuadTree:
         Return true if this quadtree contains the given point.
         """
         x, y = self.top_left
-        px = point.x
-        py = point.y
+        px, py = point.vect
         
         return (px >= x and px < x + self.width and
                 py >= y and py < y + self.height)
@@ -232,7 +193,7 @@ class QuadTree:
                 candidates = self.points.copy()
                 # point is in candidates because it is the representative
                 candidates.remove(point)
-                self.representative = min(candidates, key=lambda p: sqr_distance((p.x, p.y), (point.x, point.y)))
+                self.representative = min(candidates, key=lambda p: sqr_distance(p.vect, point.vect))
         else:
             self.NE.find_other_representative_than(point)
             self.NW.find_other_representative_than(point)
@@ -245,7 +206,7 @@ class QuadTree:
                 if r is not None and r != point:
                     candidates.append(r)
                     
-            self.representative = min(candidates, key=lambda p: sqr_distance((p.x, p.y), (point.x, point.y)))
+            self.representative = min(candidates, key=lambda p: sqr_distance(p.vect, point.vect))
     
     def closest_naive(self, point, radius):
         """
@@ -254,14 +215,14 @@ class QuadTree:
         Thus, in a setting with collisions, it is extremely unlikely that more than 6 points are close enough, and in practice, this
         method is faster than the mathematically optimal method below.
         """
-        candidates = self.query_circle((point.x, point.y), radius)
+        candidates = self.query_circle(point.vect, radius)
         if point in candidates:
             candidates.remove(point)
         
         if len(candidates) == 0:
             return None
 
-        return min(candidates, key=lambda p: sqr_distance((p.x, p.y), (point.x, point.y)))
+        return min(candidates, key=lambda p: sqr_distance(p.vect, point.vect))
 
     def closest_breadth(self, point):
         """
@@ -283,7 +244,7 @@ class QuadTree:
                 candidates.remove(point)
             if len(self.points) == 0:
                 return None
-            return min(self.points, key=lambda p: sqr_distance((p.x, p.y), (point.x, point.y)))
+            return min(self.points, key=lambda p: sqr_distance(p.vect, point.vect))
         
         sqrs = [self]
         self.find_other_representative_than(point)
@@ -292,7 +253,7 @@ class QuadTree:
         
         while sqrs != []:
             best = min([sqr.representative for sqr in sqrs] + [best],
-                           key=lambda p: sqr_distance((p.x, p.y), (point.x, point.y))
+                           key=lambda p: sqr_distance(p.vect, point.vect)
                           )
             new_sqrs = []
             for sqr in sqrs:
@@ -302,7 +263,7 @@ class QuadTree:
                 
                 for sub_sqr in [sqr.NE, sqr.NW, sqr.SE, sqr.SW]:
                     if (not sub_sqr.empty) \
-                        and (dist_to_rect_squared(sub_sqr, (point.x, point.y)) < sqr_distance((best.x, best.y), (point.x, point.y))):
+                        and (dist_to_rect_squared(sub_sqr, point.vect) < sqr_distance(best.vect, point.vect)):
                         
                         sub_sqr.find_other_representative_than(point)
                         if sub_sqr.representative == point:
@@ -323,19 +284,19 @@ class QuadTree:
             Ordering the regions by proximity to the point makes the search much more efficient and allows to discard more branches sooner.
         """
         if self.divided:
-            regions = sorted([self.NE, self.NW, self.SE, self.SW], key=lambda r: dist_to_rect_squared(r, (point.x, point.y))) \
+            regions = sorted([self.NE, self.NW, self.SE, self.SW], key=lambda r: dist_to_rect_squared(r, point.vect)) \
                         if order_regions \
                         else [self.NE, self.NW, self.SE, self.SW]
             for region in regions:
-                d = dist_to_rect_squared(region, (point.x, point.y))
-                if best is None or d < sqr_distance((best.x, best.y), (point.x, point.y)):
+                d = dist_to_rect_squared(region, point.vect)
+                if best is None or d < sqr_distance(best.vect, point.vect):
                     best = region.closest_depth(point, best, order_regions)
         else:
             for other_point in self.points:
                 if other_point == point:
                     continue
-                d = sqr_distance((other_point.x, other_point.y), (point.x, point.y))
-                if best is None or d < sqr_distance((best.x, best.y), (point.x, point.y)):
+                d = sqr_distance(other_point.vect, point.vect)
+                if best is None or d < sqr_distance(best.vect, point.vect):
                     best = other_point
         
         return best
@@ -350,7 +311,8 @@ class QuadTree:
 
         if not self.divided:
             for point in self.points:
-                if point.x >= top_left[0] and point.x < top_left[0] + width and point.y >= top_left[1] and point.y < top_left[1] + height:
+                if point.vect[0] >= top_left[0] and point.vect[0] < top_left[0] + width and \
+                   point.vect[1] >= top_left[1] and point.vect[1] < top_left[1] + height:
                     points.append(point)
         else:
             points += self.NE.query_rect(top_left, height, width)
@@ -377,7 +339,7 @@ class QuadTree:
 
         if not self.divided:
             for point in self.points:
-                if distance((point.x, point.y), center) <= radius:
+                if sqr_distance(point.vect, center) <= radius**2:
                     points.append(point)
         else:
             points += self.NE.query_circle(center, radius)
@@ -461,8 +423,7 @@ class OneCapacityQuadtree:
         Return true if this quadtree contains the given point.
         """
         x, y = self.top_left
-        px = point.x
-        py = point.y
+        px, py = point.vect
         
         return (px >= x and px < x + self.width and
                 py >= y and py < y + self.height)
@@ -577,7 +538,7 @@ class OneCapacityQuadtree:
             mindist = float('inf')
             for r in [r1, r2, r3, r4]:
                 if r is not None and r != point:
-                    d = sqr_distance((r.x, r.y), (point.x, point.y))
+                    d = sqr_distance(r.vect, point.vect)
                     if d < mindist:
                         mindist = d
                         self.representative = r
@@ -589,14 +550,14 @@ class OneCapacityQuadtree:
         Thus, in a setting with collisions, it is extremely unlikely that more than 6 points are close enough, and in practice, this
         method is faster than the mathematically optimal method below.
         """
-        candidates = self.query_circle((point.x, point.y), radius)
+        candidates = self.query_circle(point.vect, radius)
         if point in candidates:
             candidates.remove(point)
         
         if len(candidates) == 0:
             return None
 
-        return min(candidates, key=lambda p: sqr_distance((p.x, p.y), (point.x, point.y)))
+        return min(candidates, key=lambda p: sqr_distance(p.vect, point.vect))
 
     def closest_breadth(self, point):
         """
@@ -624,7 +585,7 @@ class OneCapacityQuadtree:
         
         while sqrs != []:
             best = min([sqr.representative for sqr in sqrs] + [best],
-                           key=lambda p: sqr_distance((p.x, p.y), (point.x, point.y))
+                           key=lambda p: sqr_distance(p.vect, point.vect)
                           )
             new_sqrs = []
             for sqr in sqrs:
@@ -634,7 +595,7 @@ class OneCapacityQuadtree:
                 
                 for sub_sqr in [sqr.NE, sqr.NW, sqr.SE, sqr.SW]:
                     if (not sub_sqr.empty) \
-                        and (dist_to_rect_squared(sub_sqr, (point.x, point.y)) < sqr_distance((best.x, best.y), (point.x, point.y))):
+                        and (dist_to_rect_squared(sub_sqr, point.vect) < sqr_distance(best.vect, point.vect)):
                         
                         sub_sqr.find_other_representative_than(point)
                         if sub_sqr.representative == point:
@@ -655,17 +616,17 @@ class OneCapacityQuadtree:
             Ordering the regions by proximity to the point makes the search much more efficient and allows to discard more branches sooner.
         """
         if self.divided:
-            regions = sorted([self.NE, self.NW, self.SE, self.SW], key=lambda r: dist_to_rect_squared(r, (point.x, point.y))) \
+            regions = sorted([self.NE, self.NW, self.SE, self.SW], key=lambda r: dist_to_rect_squared(r, point.vect)) \
                         if order_regions \
                         else [self.NE, self.NW, self.SE, self.SW]
             for region in regions:
-                d = dist_to_rect_squared(region, (point.x, point.y))
-                if best is None or d < sqr_distance((best.x, best.y), (point.x, point.y)):
+                d = dist_to_rect_squared(region, point.vect)
+                if best is None or d < sqr_distance(best.vect, point.vect):
                     best = region.closest_depth(point, best, order_regions)
         else:
             if self.point is not None and self.point != point:
-                d = sqr_distance((self.point.x, self.point.y), (point.x, point.y))
-                if best is None or d < sqr_distance((best.x, best.y), (point.x, point.y)):
+                d = sqr_distance(self.point.vect, point.vect)
+                if best is None or d < sqr_distance(best.vect, point.vect):
                     best = self.point
         
         return best
@@ -679,7 +640,8 @@ class OneCapacityQuadtree:
             return points
 
         if not self.divided:
-            if self.point.x >= top_left[0] and self.point.x < top_left[0] + width and self.point.y >= top_left[1] and self.point.y < top_left[1] + height:
+            if self.point.vect[0] >= top_left[0] and self.point.vect[0] < top_left[0] + width and \
+               self.point.vect[1] >= top_left[1] and self.point.vect[1] < top_left[1] + height:
                 points.append(self.point)
         else:
             points += self.NE.query_rect(top_left, height, width)
@@ -706,7 +668,7 @@ class OneCapacityQuadtree:
         if self.empty:
             return points
         if not self.divided:
-            if distance((self.point.x, self.point.y), center) <= radius:
+            if sqr_distance(self.point.vect, center) <= radius**2:
                 points.append(self.point)
         else:
             points += self.NE.query_circle(center, radius)
